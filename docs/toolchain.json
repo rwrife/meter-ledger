@@ -1,0 +1,12 @@
+{
+  "status": "planned; no Flutter build measured",
+  "platform": "windows+android+ios",
+  "framework": "Flutter",
+  "flutter_version": "3.47.7",
+  "flutter_channel": "stable",
+  "dart_version": "3.13.5",
+  "bundle_identifier": "com.infinityball.meterledger",
+  "android_application_id": "com.infinityball.meterledger",
+  "ios_native_ipad_support": true,
+  "windows_primary_ci": "windows-latest"
+}
