@@ -21,17 +21,17 @@ For renters, homeowners, and small property caretakers who want a transparent re
 
 ## Platforms and privacy
 
-Flutter stable, one Dart codebase: Windows desktop primary CI/release, Android and iOS phones and tablets first-class. Adaptive layout supports touch, keyboard/mouse, resize and accessible screen-reader labels, contrast and scalable text. Strategy A: Cupertino on iOS/iPadOS, Material 3 on Android, Fluent-style desktop on Windows behind a small adaptive-widget seam; never impose another OS's appearance. SQLite local only, no network or account; explicit user-chosen backup/export paths. Optional camera capture is not MVP, so no camera/location/network permission requested. Backups may include private address and cost data; user controls sharing.
+Flutter stable, one Dart codebase: Windows desktop primary CI/release, Android and iOS phones and tablets first-class. Current shell shows only a coming-soon message using Cupertino on iOS, Material 3 on Android, and plain Flutter desktop widgets on Windows. Adaptive navigation, Fluent-style desktop workspace, accessibility and scalable layout remain planned; never impose another OS's appearance. Planned data layer uses local SQLite without network or accounts; backup/export with user-chosen destination remains future work. No camera/location permission needed for manual entry. Future backups may include private address and cost data; user controls sharing.
 
 Android applicationId and iOS bundle ID: `com.infinityball.meterledger`; iPad enabled. ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8, ASC_TEAM_ID names reserved for later opt-in iOS publishing; secret values never enter repository. `AppStore/description.txt` is planned-feature copy. `AppStore/icon.png` is generated art from OpenAI Images `gpt-image-2.5-flare`; platform icon wiring remains backlog work.
 
 ## Status and milestones
 
-Documentation and generated art only; no Flutter project or builds yet. See [PLAN.md](PLAN.md) and seven issues: skeleton/CI, pure calculations, storage, workflows, adaptive UI, backup, release. Project skeleton must create `windows/`, `android/`, `ios/`. `.github/workflows/release.yml` must build zipped Windows release on `windows-latest` for `v*` tags/manual dispatch; TestFlight/Play submission deferred. No completed app or store listing claimed.
+Flutter project skeleton and platform folders exist. CI tests and builds Windows release plus Android debug; app currently displays a coming-soon screen, with no meter storage or calculations. See [PLAN.md](PLAN.md) and remaining issues. Windows release workflow and store submission remain backlog work. No completed app or store listing claimed.
 
-## Development quickstart (after skeleton issue)
+## Development quickstart
 
-Install pinned Flutter stable from `docs/toolchain.json`; run `flutter pub get`, `flutter test`, `flutter build windows --release` on Windows, and `flutter build apk --debug` on Linux/Docker. Source-only documentation cannot be built yet.
+Install Flutter 3.47.7 stable from `docs/toolchain.json`; run `flutter pub get --enforce-lockfile`, `flutter analyze`, `flutter test`, `flutter build windows --release` on Windows, and `flutter build apk --debug` on Linux/Android Docker. iOS compile requires macOS and remains unverified.
 
 ## Manual setup required
 
