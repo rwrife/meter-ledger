@@ -1,5 +1,5 @@
 {
-  "status": "planned; no Flutter build measured",
+  "status": "Flutter project scaffolded; Windows and Android CI pending",
   "platform": "windows+android+ios",
   "framework": "Flutter",
   "flutter_version": "3.47.7",
