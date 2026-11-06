@@ -108,6 +108,59 @@ class _WorkspaceState extends State<MeterWorkspaceLayout> {
   data = _load();
   String? selectedId;
   String? propertyId;
+  static const sections = ['Properties', 'Meters', 'Journal'];
+  final sectionKeys = List.generate(3, (_) => GlobalKey());
+  void navigate(int index) {
+    final target = sectionKeys[index].currentContext;
+    if (target != null) {
+      Scrollable.ensureVisible(
+        target,
+        duration: const Duration(milliseconds: 250),
+      );
+    }
+  }
+
+  // ponytail: one scrollable journal; separate desktop panes when workflows grow.
+  Future<void> pickDate(String key) async {
+    final initial = DateTime.tryParse(text(key)) ?? DateTime.now();
+    DateTime? picked;
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      picked = await showCupertinoModalPopup<DateTime>(
+        context: context,
+        builder: (context) {
+          DateTime current = initial;
+          return Container(
+            height: 300,
+            color: CupertinoColors.systemBackground.resolveFrom(context),
+            child: Column(
+              children: [
+                CupertinoButton(
+                  onPressed: () => Navigator.of(context).pop(current),
+                  child: const Text('Done'),
+                ),
+                Expanded(
+                  child: CupertinoDatePicker(
+                    mode: CupertinoDatePickerMode.date,
+                    initialDateTime: initial,
+                    onDateTimeChanged: (value) => current = value,
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+    } else {
+      picked = await showDatePicker(
+        context: context,
+        initialDate: initial,
+        firstDate: DateTime(1900),
+        lastDate: DateTime(2200),
+      );
+    }
+    if (picked != null && mounted) field(key).text = day(picked);
+  }
+
   String? error;
   String? notice;
   int sequence = 0;
@@ -119,7 +172,6 @@ class _WorkspaceState extends State<MeterWorkspaceLayout> {
   final fields = <String, TextEditingController>{};
   final focusNodes = <String, FocusNode>{};
   FocusNode focus(String key) => focusNodes.putIfAbsent(key, FocusNode.new);
-  // ponytail: native pickers, plot and full adaptive layout belong to issue #5.
   TextEditingController field(String key) =>
       fields.putIfAbsent(key, TextEditingController.new);
   String text(String key) => field(key).text.trim();
@@ -146,7 +198,9 @@ class _WorkspaceState extends State<MeterWorkspaceLayout> {
     );
   }
 
-  void reload() => setState(() => data = _load());
+  void reload() => setState(() {
+    data = _load();
+  });
 
   Future<void> save(Future<void> Function() operation, String message) async {
     try {
@@ -242,7 +296,7 @@ class _WorkspaceState extends State<MeterWorkspaceLayout> {
                   )
                   .toList()
                 ..sort((a, b) => a.date.compareTo(b.date));
-          return SingleChildScrollView(
+          final content = SingleChildScrollView(
             child: Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 960),
@@ -266,7 +320,7 @@ class _WorkspaceState extends State<MeterWorkspaceLayout> {
                         ),
                       if (notice != null)
                         Semantics(liveRegion: true, child: Text(notice!)),
-                      heading('Properties'),
+                      heading('Properties', key: sectionKeys[0]),
                       for (final property in state.properties)
                         Text(property.name),
                       input('Property name', 'property'),
@@ -279,7 +333,7 @@ class _WorkspaceState extends State<MeterWorkspaceLayout> {
                           field('property').clear();
                         }, 'Property saved'),
                       ),
-                      heading('Meters'),
+                      heading('Meters', key: sectionKeys[1]),
                       for (final entry in state.meters)
                         button(
                           '${entry.id} • ${entry.kind.name} • ${entry.unit.name}${entry.id == selectedId ? " • selected" : ""}',
@@ -348,7 +402,10 @@ class _WorkspaceState extends State<MeterWorkspaceLayout> {
                       ] else
                         const Text('Add a property first.'),
                       if (meter != null && journal != null) ...[
-                        heading('Readings • ${meter.unit.name}'),
+                        heading(
+                          'Readings • ${meter.unit.name}',
+                          key: sectionKeys[2],
+                        ),
                         for (final reading in active)
                           button(
                             '${day(reading.date)} • ${reading.value} ${reading.unit.name} • ${reading.seriesId}${reading.correctionReason == null ? "" : " • corrected: ${reading.correctionReason}"} (correct)',
@@ -362,7 +419,11 @@ class _WorkspaceState extends State<MeterWorkspaceLayout> {
                           Text(
                             'Correcting ${correcting!.id}; original stays in journal',
                           ),
-                        input('Reading date (YYYY-MM-DD)', 'readingDate'),
+                        input(
+                          'Reading date (YYYY-MM-DD)',
+                          'readingDate',
+                          datePicker: true,
+                        ),
                         input(
                           'Cumulative display value (${meter.unit.name})',
                           'value',
@@ -421,8 +482,12 @@ class _WorkspaceState extends State<MeterWorkspaceLayout> {
                           ),
                         heading('Bills • ${meter.unit.name}'),
                         for (final bill in state.bills) billLine(journal, bill),
-                        input('Bill start (YYYY-MM-DD)', 'start'),
-                        input('Bill end (YYYY-MM-DD)', 'end'),
+                        input(
+                          'Bill start (YYYY-MM-DD)',
+                          'start',
+                          datePicker: true,
+                        ),
+                        input('Bill end (YYYY-MM-DD)', 'end', datePicker: true),
                         input(
                           'Billed quantity (${meter.unit.name})',
                           'quantity',
@@ -470,6 +535,41 @@ class _WorkspaceState extends State<MeterWorkspaceLayout> {
               ),
             ),
           );
+          return LayoutBuilder(
+            builder: (context, constraints) {
+              final isDesktop = constraints.maxWidth >= 720;
+              if (defaultTargetPlatform == TargetPlatform.windows) {
+                return Row(
+                  children: [
+                    Container(
+                      width: isDesktop ? 220 : 120,
+                      color: const Color(0xfff0f4f8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const Padding(
+                            padding: EdgeInsets.all(16),
+                            child: Text(
+                              'Navigation',
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                          for (var i = 0; i < sections.length; i++)
+                            _DesktopNavTile(
+                              title: sections[i],
+                              onTap: () => navigate(i),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const VerticalDivider(width: 1, thickness: 1),
+                    Expanded(child: content),
+                  ],
+                );
+              }
+              return content;
+            },
+          );
         },
       );
 
@@ -496,7 +596,8 @@ class _WorkspaceState extends State<MeterWorkspaceLayout> {
     );
   }
 
-  Widget heading(String value) => Padding(
+  Widget heading(String value, {Key? key}) => Padding(
+    key: key,
     padding: const EdgeInsets.only(top: 22, bottom: 8),
     child: Text(
       value,
@@ -525,47 +626,63 @@ class _WorkspaceState extends State<MeterWorkspaceLayout> {
     ],
   );
 
-  Widget input(String label, String key, {bool numeric = false}) {
+  Widget input(
+    String label,
+    String key, {
+    bool numeric = false,
+    bool datePicker = false,
+  }) {
     final keyboard = numeric
         ? const TextInputType.numberWithOptions(decimal: true)
         : TextInputType.text;
     final controller = field(key);
+    final textField = switch (defaultTargetPlatform) {
+      TargetPlatform.iOS => CupertinoTextField(
+        controller: controller,
+        placeholder: label,
+        keyboardType: keyboard,
+      ),
+      TargetPlatform.android => TextField(
+        controller: controller,
+        decoration: InputDecoration(
+          labelText: label,
+          border: const OutlineInputBorder(),
+        ),
+        keyboardType: keyboard,
+      ),
+      _ => Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: const Color(0xffffffff),
+          border: Border.all(color: const Color(0xff747b83)),
+        ),
+        child: EditableText(
+          controller: controller,
+          focusNode: focus(key),
+          style: const TextStyle(fontSize: 16, color: Color(0xff17364a)),
+          cursorColor: const Color(0xff005a9e),
+          backgroundCursorColor: const Color(0xff8799aa),
+          keyboardType: keyboard,
+        ),
+      ),
+    };
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(label),
-          switch (defaultTargetPlatform) {
-            TargetPlatform.iOS => CupertinoTextField(
-              controller: controller,
-              placeholder: label,
-              keyboardType: keyboard,
-            ),
-            TargetPlatform.android => TextField(
-              controller: controller,
-              decoration: InputDecoration(
-                labelText: label,
-                border: const OutlineInputBorder(),
-              ),
-              keyboardType: keyboard,
-            ),
-            _ => Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: const Color(0xffffffff),
-                border: Border.all(color: const Color(0xff747b83)),
-              ),
-              child: EditableText(
-                controller: controller,
-                focusNode: focus(key),
-                style: const TextStyle(fontSize: 16, color: Color(0xff17364a)),
-                cursorColor: const Color(0xff005a9e),
-                backgroundCursorColor: const Color(0xff8799aa),
-                keyboardType: keyboard,
-              ),
-            ),
-          },
+          if (datePicker)
+            Row(
+              children: [
+                Expanded(child: textField),
+                const SizedBox(width: 8),
+                button('Pick date', () => pickDate(key)),
+              ],
+            )
+          else
+            textField,
         ],
       ),
     );
@@ -584,6 +701,18 @@ class _WorkspaceState extends State<MeterWorkspaceLayout> {
       ),
       _ => _DesktopButton(title: title, action: action),
     },
+  );
+}
+
+class _DesktopNavTile extends StatelessWidget {
+  const _DesktopNavTile({required this.title, required this.onTap});
+  final String title;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+    child: _DesktopButton(title: title, action: onTap),
   );
 }
 
