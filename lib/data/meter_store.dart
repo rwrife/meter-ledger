@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:meterledger/domain/meter_domain.dart';
@@ -52,6 +53,141 @@ class MeterStore {
   }
 
   Future<void> close() => _db.close();
+
+  static const _tables = ['properties', 'meters', 'readings', 'bills'];
+  static const _columns = <String, List<String>>{
+    'properties': ['id', 'name'],
+    'meters': ['id', 'property_id', 'kind', 'unit', 'rollover_modulus'],
+    'readings': [
+      'id',
+      'meter_id',
+      'series_id',
+      'date',
+      'value',
+      'unit',
+      'rollover',
+      'supersedes_id',
+      'correction_reason',
+    ],
+    'bills': [
+      'id',
+      'meter_id',
+      'start_date',
+      'end_date',
+      'quantity',
+      'unit',
+      'amount',
+      'currency',
+    ],
+  };
+
+  // ponytail: core portability only; add system-picked files and restore preview before release.
+  /// Returns bytes for an explicit user-selected destination; never writes exports itself.
+  Future<String> exportJson() async {
+    final data = <String, Object?>{'format': 'meter-ledger', 'version': 1};
+    for (final table in _tables) {
+      data[table] = await _db.query(table, orderBy: 'rowid');
+    }
+    return jsonEncode(data);
+  }
+
+  /// Validate all rows inside one transaction; exceptions leave prior journal intact.
+  Future<void> restoreJson(String text) async {
+    if (utf8.encode(text).length > 10 * 1024 * 1024) {
+      throw const FormatException('Backup exceeds 10 MiB');
+    }
+    final decoded = jsonDecode(text);
+    if (decoded is! Map<String, dynamic> ||
+        decoded['format'] != 'meter-ledger' ||
+        decoded['version'] != 1 ||
+        decoded.length != _tables.length + 2) {
+      throw const FormatException('Unsupported backup format or version');
+    }
+    final rows = <String, List<Map<String, Object?>>>{};
+    for (final table in _tables) {
+      final raw = decoded[table];
+      if (raw is! List || raw.length > 100000) {
+        throw FormatException('Invalid $table rows');
+      }
+      rows[table] = [
+        for (final item in raw)
+          if (item is Map<String, dynamic> &&
+              item.keys.toSet().containsAll(_columns[table]!) &&
+              item.length == _columns[table]!.length &&
+              item.values.every((v) => v == null || v is String || v is num))
+            Map<String, Object?>.from(item)
+          else
+            throw FormatException('Invalid $table row'),
+      ];
+    }
+    await _db.transaction((tx) async {
+      for (final table in _tables.reversed) {
+        await tx.delete(table);
+      }
+      for (final table in _tables) {
+        for (final row in rows[table]!) {
+          await tx.insert(table, row);
+        }
+      }
+      for (final meter in await tx.query('meters')) {
+        final id = meter['id'] as String;
+        MeterJournal(
+          meter: Meter(
+            id: id,
+            propertyId: meter['property_id'] as String,
+            kind: MeterKind.values.byName(meter['kind'] as String),
+            unit: MeterUnit.values.byName(meter['unit'] as String),
+            rolloverModulus: (meter['rollover_modulus'] as num?)?.toDouble(),
+          ),
+          readings: await _readings(tx, id),
+        );
+      }
+      for (final row in await tx.query('bills')) {
+        UtilityBill(
+          meterId: row['meter_id'] as String,
+          start: DateTime.parse(row['start_date'] as String),
+          end: DateTime.parse(row['end_date'] as String),
+          quantity: (row['quantity'] as num).toDouble(),
+          unit: MeterUnit.values.byName(row['unit'] as String),
+          amount: (row['amount'] as num?)?.toDouble(),
+          currency: row['currency'] as String?,
+        );
+      }
+    });
+  }
+
+  /// RFC 4180 fields; prefix formula-leading text to avoid spreadsheet execution.
+  Future<String> readingsCsv() async {
+    String cell(Object? value) {
+      var text = value?.toString() ?? '';
+      if (text.isNotEmpty && '=+-@\t\r'.contains(text[0])) text = "'$text";
+      return '"${text.replaceAll('"', '""')}"';
+    }
+
+    final lines = <String>[
+      'property,meter,kind,unit,date,value,series,rollover,supersedes,correction',
+    ];
+    final propertiesById = {for (final p in await properties()) p.id: p.name};
+    for (final meter in await meters()) {
+      for (final reading in await readings(meter.id)) {
+        lines.add(
+          [
+            propertiesById[meter.propertyId],
+            meter.id,
+            meter.kind.name,
+            reading.unit.name,
+            reading.date.toIso8601String(),
+            reading.value,
+            reading.seriesId,
+            reading.rolloverFromPrevious,
+            reading.supersedesId,
+            reading.correctionReason,
+          ].map(cell).join(','),
+        );
+      }
+    }
+    return '${lines.join('\r\n')}\r\n';
+  }
 
   Future<void> addProperty(Property property) async {
     await _db.insert('properties', {'id': property.id, 'name': property.name});
