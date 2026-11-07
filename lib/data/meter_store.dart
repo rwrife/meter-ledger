@@ -6,9 +6,12 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 /// Private SQLite journal. Corrections append; existing readings are never overwritten.
 class MeterStore {
-  MeterStore._(this._db);
+  MeterStore._(this._db, this.factory);
 
   final Database _db;
+
+  /// Staging uses same backend as live journal.
+  final DatabaseFactory factory;
 
   static Future<MeterStore> open(
     String path, {
@@ -18,9 +21,11 @@ class MeterStore {
       sqfliteFfiInit();
       factory = databaseFactoryFfi;
     }
-    final db = await (factory ?? databaseFactory).openDatabase(
+    factory ??= databaseFactory;
+    final db = await factory.openDatabase(
       path,
       options: OpenDatabaseOptions(
+        singleInstance: path != ':memory:',
         version: 2,
         onConfigure: (db) => db.execute('PRAGMA foreign_keys = ON'),
         onCreate: (db, version) async {
@@ -49,7 +54,7 @@ class MeterStore {
         },
       ),
     );
-    return MeterStore._(db);
+    return MeterStore._(db, factory);
   }
 
   Future<void> close() => _db.close();

@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -89,8 +91,16 @@ class _AppState extends State<MeterLedgerApp> {
 
 /// Shared workflow; controls retain native look on iOS/Android, desktop chrome on Windows.
 class MeterWorkspaceLayout extends StatefulWidget {
-  const MeterWorkspaceLayout({super.key, required this.store});
+  const MeterWorkspaceLayout({
+    super.key,
+    required this.store,
+    this.saveFile,
+    this.pickBackup,
+  });
   final MeterStore store;
+  final Future<Uri?> Function(String name, Uint8List bytes, String mime)?
+  saveFile;
+  final Future<Uint8List?> Function()? pickBackup;
 
   @override
   State<MeterWorkspaceLayout> createState() => _WorkspaceState();
@@ -109,7 +119,7 @@ class _WorkspaceState extends State<MeterWorkspaceLayout> {
   String? selectedId;
   String? propertyId;
   static const sections = ['Properties', 'Meters', 'Journal'];
-  final sectionKeys = List.generate(3, (_) => GlobalKey());
+  final sectionKeys = List.generate(4, (_) => GlobalKey());
   void navigate(int index) {
     final target = sectionKeys[index].currentContext;
     if (target != null) {
@@ -202,7 +212,142 @@ class _WorkspaceState extends State<MeterWorkspaceLayout> {
     data = _load();
   });
 
+  bool busy = false;
+  Future<void> exportJournal({required bool csv}) async {
+    if (busy) return;
+    setState(() => busy = true);
+    try {
+      final text = csv
+          ? await widget.store.readingsCsv()
+          : await widget.store.exportJson();
+      final destination =
+          await (widget.saveFile ??
+              (name, bytes, mime) => FilePicker.saveFile(
+                fileName: name,
+                bytes: bytes,
+                mimeType: mime,
+              ))(
+            csv ? 'meter-ledger-readings.csv' : 'meter-ledger-backup.json',
+            Uint8List.fromList(utf8.encode(text)),
+            csv ? 'text/csv' : 'application/json',
+          );
+      if (mounted) {
+        setState(() {
+          error = null;
+          notice = destination == null
+              ? 'Export canceled'
+              : 'Export saved to $destination';
+        });
+      }
+    } catch (failure) {
+      if (mounted) setState(() => error = 'Export failed: $failure');
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> restoreJournal() async {
+    if (busy) return;
+    setState(() => busy = true);
+    try {
+      final bytes =
+          await (widget.pickBackup ??
+              () async {
+                final file = await FilePicker.pickFile(
+                  type: FileType.custom,
+                  allowedExtensions: ['json'],
+                );
+                if (file == null) return null;
+                if ((await file.length()) case final size?
+                    when size > 10 * 1024 * 1024) {
+                  throw const FormatException('Backup exceeds 10 MiB');
+                }
+                return file.readAsBytes();
+              })();
+      if (bytes == null) {
+        if (mounted) setState(() => notice = 'Restore canceled');
+        return;
+      }
+      if (bytes.length > 10 * 1024 * 1024) {
+        throw const FormatException('Backup exceeds 10 MiB');
+      }
+      final text = utf8.decode(bytes);
+      // Validate in an isolated staging database before asking to replace live rows.
+      final staging = await MeterStore.open(
+        ':memory:',
+        factory: widget.store.factory,
+      );
+      try {
+        await staging.restoreJson(text);
+      } finally {
+        await staging.close();
+      }
+      if (!mounted) return;
+      final confirmed = await showRestoreConfirmation();
+      if (confirmed != true || !mounted) return;
+      await widget.store.restoreJson(text);
+      selectedId = null;
+      correcting = null;
+      reload();
+      if (mounted) {
+        setState(() {
+          error = null;
+          notice = 'Backup restored';
+        });
+      }
+    } catch (failure) {
+      if (mounted) {
+        setState(() => error = 'Restore failed; journal unchanged: $failure');
+      }
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<bool?> showRestoreConfirmation() =>
+      defaultTargetPlatform == TargetPlatform.iOS
+      ? showCupertinoDialog<bool>(
+          context: context,
+          builder: (context) => CupertinoAlertDialog(
+            title: const Text('Replace local journal?'),
+            content: const Text(
+              'Validated backup will replace every property, meter, reading and bill on this device. Export current journal first.',
+            ),
+            actions: [
+              CupertinoDialogAction(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              CupertinoDialogAction(
+                isDestructiveAction: true,
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Replace journal'),
+              ),
+            ],
+          ),
+        )
+      : showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Replace local journal?'),
+            content: const Text(
+              'Validated backup will replace every property, meter, reading and bill on this device. Export current journal first.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Replace journal'),
+              ),
+            ],
+          ),
+        );
+
   Future<void> save(Future<void> Function() operation, String message) async {
+    if (busy) return;
     try {
       await operation();
       if (!mounted) return;
@@ -529,6 +674,19 @@ class _WorkspaceState extends State<MeterWorkspaceLayout> {
                           }, 'Bill saved'),
                         ),
                       ],
+                      heading('Backup and export', key: sectionKeys[3]),
+                      const Text(
+                        'Exported files can contain property addresses, readings and costs. Store them privately. CSV lists readings; JSON backs up the full journal.',
+                      ),
+                      button(
+                        'Export readings CSV',
+                        () => exportJournal(csv: true),
+                      ),
+                      button(
+                        'Export JSON backup',
+                        () => exportJournal(csv: false),
+                      ),
+                      button('Restore JSON backup', restoreJournal),
                     ],
                   ),
                 ),
