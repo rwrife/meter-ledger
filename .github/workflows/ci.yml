@@ -20,6 +20,12 @@ jobs:
       - run: flutter analyze
       - run: flutter test
       - run: flutter build windows --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: meter-ledger-windows-portable
+          path: build/windows/x64/runner/Release/
+          if-no-files-found: error
+          retention-days: 14
 
   android:
     runs-on: ubuntu-latest
